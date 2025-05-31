@@ -82,16 +82,23 @@ io.on("connection", (socket) => {
             socket.join(roomId);
             addUserToRoom(roomId, socket.id);
             socket.currentRoom = roomId;
-            socket.emit('room-joined', { room: roomId });
             
-            const otherUsers = getUsersInRoom(roomId).filter(id => id !== socket.id);
+            // Get all users in the room
+            const usersInRoom = getUsersInRoom(roomId);
             
-            if (otherUsers.length > 0) {
-                socket.to(roomId).emit('user-joined', { userId: socket.id });
-                console.log(`Notified ${otherUsers.length} users about new user ${socket.id}`);
-            }
+            // Notify the new user about all existing users
+            socket.emit('room-joined', { 
+                room: roomId,
+                users: usersInRoom.filter(id => id !== socket.id)
+            });
             
-            console.log(`User ${socket.id} joined room ${roomId}. Total users: ${getUsersInRoom(roomId).length}`);
+            // Notify all existing users about the new user
+            socket.to(roomId).emit('user-joined', { 
+                userId: socket.id,
+                room: roomId
+            });
+            
+            console.log(`User ${socket.id} joined room ${roomId}. Total users: ${usersInRoom.length}`);
             
         } catch (error) {
             console.error(`Error joining room: ${error.message}`);
@@ -126,6 +133,7 @@ io.on("connection", (socket) => {
             socket.emit('error', { message: 'Failed to send offer' });
         }
     });
+    
     socket.on("answer", (data) => {
         try {
             const { answer, room, target } = data;
@@ -144,13 +152,13 @@ io.on("connection", (socket) => {
     
     socket.on("ice-candidate", (data) => {
         try {
-            const { candidate, room } = data;
-            console.log(`Relaying ICE candidate from ${socket.id} in room ${room}`);
+            const { candidate, room, target } = data;
+            console.log(`Relaying ICE candidate from ${socket.id} to ${target} in room ${room}`);
             
-            // Broadcast to all other users in the room
-            socket.to(room).emit('ice-candidate', {
+            socket.to(target).emit('ice-candidate', {
                 candidate: candidate,
-                from: socket.id
+                from: socket.id,
+                room: room
             });
         } catch (error) {
             console.error(`Error handling ICE candidate: ${error.message}`);
