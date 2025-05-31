@@ -216,12 +216,14 @@
         let localStream = null;
         let currentRoom = null;
         const peers = new Map(); // Store all peer connections
+        const remoteStreams = new Map(); // Store remote streams
         let isInitiator = false;
         let isPolite = false; // Track if we're the polite peer
         let makingOffer = false; // Track if we're in the process of making an offer
         let ignoreOffer = false; // Track if we should ignore incoming offers
         let isSettingRemoteAnswer = false; // Track if we're setting a remote answer
         let queuedCandidates = new Map(); // Store ICE candidates that arrive before remote description
+        let lastOffer = null; // Store the last offer to maintain media line order
         
         // UI Elements
         const localVideo = document.getElementById('localVideo');
@@ -341,7 +343,7 @@
                 if (remoteStream) {
                     console.log(`Remote stream received from ${userId}`);
                     remoteStreams.set(userId, remoteStream);
-                    addOrUpdateVideo(userId, remoteStream, false);
+                    addRemoteVideo(userId, remoteStream);
                 }
             };
 
@@ -356,6 +358,29 @@
 
                     makingOffer = true;
                     const offer = await peerConnection.createOffer();
+                    
+                    // If we have a previous offer, ensure the media line order matches
+                    if (lastOffer) {
+                        const lastSdp = lastOffer.sdp;
+                        const newSdp = offer.sdp;
+                        const lastMLines = lastSdp.split('\nm=');
+                        const newMLines = newSdp.split('\nm=');
+                        
+                        if (lastMLines.length === newMLines.length) {
+                            // Reorder the new SDP to match the last one
+                            const reorderedMLines = lastMLines.map((lastM, index) => {
+                                const newM = newMLines[index];
+                                if (newM) {
+                                    return newM;
+                                }
+                                return lastM;
+                            });
+                            
+                            offer.sdp = reorderedMLines.join('\nm=');
+                        }
+                    }
+                    
+                    lastOffer = offer;
                     await peerConnection.setLocalDescription(offer);
                     makingOffer = false;
                     
@@ -376,6 +401,12 @@
         // Add remote video
         function addRemoteVideo(userId, stream) {
             console.log(`Adding remote video for user: ${userId}`);
+            
+            // Remove existing video if any
+            const existingVideo = document.getElementById(`video-${userId}`);
+            if (existingVideo) {
+                existingVideo.remove();
+            }
             
             // Create video container
             const videoContainer = document.createElement('div');
@@ -407,7 +438,7 @@
             console.log(`Removing peer: ${userId}`);
             
             // Remove video element
-            const videoElement = document.getElementById(`remote-video-${userId}`);
+            const videoElement = document.getElementById(`video-${userId}`);
             if (videoElement) {
                 videoElement.remove();
             }
