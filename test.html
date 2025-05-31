@@ -276,7 +276,8 @@
             console.log(`Creating peer connection for user: ${userId}`);
             
             const peerConnection = new RTCPeerConnection({
-                iceServers: ICE_SERVERS
+                iceServers: ICE_SERVERS,
+                iceCandidatePoolSize: 10
             });
             
             // Add local tracks to the peer connection
@@ -324,12 +325,34 @@
                 addRemoteVideo(userId, remoteStream);
             };
             
+            // Handle negotiation needed
+            peerConnection.onnegotiationneeded = async () => {
+                console.log(`Negotiation needed for ${userId}`);
+                try {
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    socket.emit('offer', {
+                        offer: offer,
+                        room: currentRoom,
+                        target: userId
+                    });
+                } catch (error) {
+                    console.error('Error during negotiation:', error);
+                }
+            };
+            
             return peerConnection;
         }
         
         // Add remote video
         function addRemoteVideo(userId, stream) {
             console.log(`Adding remote video for user: ${userId}`);
+            
+            // Remove existing video if any
+            const existingContainer = document.getElementById(`video-${userId}`);
+            if (existingContainer) {
+                existingContainer.remove();
+            }
             
             // Create video container
             const videoContainer = document.createElement('div');
@@ -491,15 +514,11 @@
                     peers.set(from, peerConnection);
                 }
 
-                // Check if we're in a state where we can set the remote description
-                if (peerConnection.signalingState !== 'stable') {
-                    console.log('Connection not stable, ignoring offer');
-                    return;
-                }
-                
+                // Set remote description first
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                 console.log('Set remote description from offer');
                 
+                // Then create and set local description
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
@@ -522,12 +541,6 @@
             try {
                 const peerConnection = peers.get(from);
                 if (peerConnection) {
-                    // Check if we're in a state where we can set the remote description
-                    if (peerConnection.signalingState !== 'have-local-offer') {
-                        console.log('Connection not in have-local-offer state, ignoring answer');
-                        return;
-                    }
-                    
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                     console.log('Set remote description from answer');
                 }
@@ -559,12 +572,6 @@
         // Create and send offer
         async function createAndSendOffer(userId, peerConnection) {
             try {
-                // Check if we're in a state where we can create an offer
-                if (peerConnection.signalingState !== 'stable') {
-                    console.log('Connection not stable, cannot create offer');
-                    return;
-                }
-
                 console.log(`Creating offer for user: ${userId}`);
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
