@@ -239,6 +239,12 @@
             { urls: 'stun:stun2.l.google.com:19302' }
         ];
         
+        let isPolite = false; // Track if we're the polite peer
+        let makingOffer = false; // Track if we're in the process of making an offer
+        let ignoreOffer = false; // Track if we should ignore incoming offers
+        let isSettingRemoteAnswer = false; // Track if we're setting a remote answer
+        let queuedCandidates = new Map(); // Store ICE candidates that arrive before remote description
+        
         // Initialize media
         async function initializeMedia() {
             try {
@@ -280,7 +286,9 @@
             
             const peerConnection = new RTCPeerConnection({
                 iceServers: ICE_SERVERS,
-                iceCandidatePoolSize: 10
+                iceCandidatePoolSize: 10,
+                bundlePolicy: 'max-bundle',
+                rtcpMuxPolicy: 'require'
             });
             
             // Add local tracks to the peer connection
@@ -306,11 +314,27 @@
             // Handle connection state changes
             peerConnection.onconnectionstatechange = () => {
                 console.log(`Connection state with ${userId}: ${peerConnection.connectionState}`);
-                
                 if (['disconnected', 'failed', 'closed'].includes(peerConnection.connectionState)) {
                     removePeer(userId);
                 } else if (peerConnection.connectionState === 'connected') {
                     updateStatus('connected');
+                }
+            };
+
+            // Handle signaling state changes
+            peerConnection.onsignalingstatechange = () => {
+                console.log(`Signaling state with ${userId}: ${peerConnection.signalingState}`);
+                if (peerConnection.signalingState === 'stable') {
+                    // Process any queued ICE candidates
+                    const candidates = queuedCandidates.get(userId) || [];
+                    if (candidates.length > 0) {
+                        console.log(`Processing ${candidates.length} queued ICE candidates for ${userId}`);
+                        candidates.forEach(candidate => {
+                            peerConnection.addIceCandidate(new RTCIceCandidate(candidate))
+                                .catch(e => console.error('Error adding queued ICE candidate:', e));
+                        });
+                        queuedCandidates.delete(userId);
+                    }
                 }
             };
             
@@ -318,11 +342,35 @@
             peerConnection.ontrack = (event) => {
                 console.log(`Received remote track from ${userId}: ${event.track.kind}`);
                 const [remoteStream] = event.streams;
-                
                 if (remoteStream) {
                     console.log(`Remote stream received from ${userId}`);
                     remoteStreams.set(userId, remoteStream);
                     addOrUpdateVideo(userId, remoteStream, false);
+                }
+            };
+
+            // Handle negotiation needed
+            peerConnection.onnegotiationneeded = async () => {
+                console.log(`Negotiation needed for ${userId}`);
+                try {
+                    if (peerConnection.signalingState !== 'stable') {
+                        console.log('Connection not stable, not sending offer');
+                        return;
+                    }
+
+                    makingOffer = true;
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    makingOffer = false;
+                    
+                    socket.emit('offer', {
+                        offer: offer,
+                        room: currentRoom,
+                        target: userId
+                    });
+                } catch (error) {
+                    console.error('Error during negotiation:', error);
+                    makingOffer = false;
                 }
             };
             
@@ -392,6 +440,9 @@
             
             // Remove remote stream
             remoteStreams.delete(userId);
+            
+            // Remove queued candidates
+            queuedCandidates.delete(userId);
             
             updateStatus('disconnected');
         }
@@ -498,6 +549,10 @@
             console.log('Joined room:', data);
             const { room, users } = data;
             
+            // If we're the first user in the room, we're the polite peer
+            isPolite = users.length === 0;
+            console.log(`We are ${isPolite ? 'polite' : 'impolite'} peer`);
+            
             updateStatus('connecting');
             
             // Create peer connections for existing users (excluding ourselves)
@@ -506,6 +561,9 @@
                     console.log(`Creating peer connection for existing user: ${userId}`);
                     const peerConnection = createPeerConnection(userId);
                     peers.set(userId, peerConnection);
+                    
+                    // Create and send offer
+                    createAndSendOffer(userId, peerConnection);
                 }
             });
         });
@@ -554,8 +612,18 @@
                     peerConnection = createPeerConnection(from);
                     peers.set(from, peerConnection);
                 }
+
+                const offerCollision = makingOffer || peerConnection.signalingState !== 'stable';
+                ignoreOffer = !isPolite && offerCollision;
                 
+                if (ignoreOffer) {
+                    console.log('Ignoring offer due to collision');
+                    return;
+                }
+
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                console.log('Set remote description from offer');
+                
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
@@ -579,11 +647,19 @@
             try {
                 const peerConnection = peers.get(from);
                 if (peerConnection) {
+                    if (peerConnection.signalingState !== 'have-local-offer') {
+                        console.log('Not in have-local-offer state, ignoring answer');
+                        return;
+                    }
+
+                    isSettingRemoteAnswer = true;
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                    isSettingRemoteAnswer = false;
                     console.log(`Set remote description from ${from}`);
                 }
             } catch (error) {
                 console.error('Error handling answer:', error);
+                isSettingRemoteAnswer = false;
             }
         });
         
@@ -593,9 +669,17 @@
             
             try {
                 const peerConnection = peers.get(from);
-                if (peerConnection && peerConnection.remoteDescription) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                    console.log(`Added ICE candidate from ${from}`);
+                if (peerConnection) {
+                    if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        console.log(`Added ICE candidate from ${from}`);
+                    } else {
+                        console.log('Queueing ICE candidate for later');
+                        if (!queuedCandidates.has(from)) {
+                            queuedCandidates.set(from, []);
+                        }
+                        queuedCandidates.get(from).push(candidate);
+                    }
                 }
             } catch (error) {
                 console.error('Error adding ICE candidate:', error);
@@ -650,6 +734,32 @@
                 localStream.getTracks().forEach(track => track.stop());
             }
         });
+
+        // Create and send offer
+        async function createAndSendOffer(userId, peerConnection) {
+            try {
+                if (peerConnection.signalingState !== 'stable') {
+                    console.log('Connection not stable, not creating offer');
+                    return;
+                }
+
+                makingOffer = true;
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                makingOffer = false;
+                
+                console.log('Sending offer to:', userId);
+                socket.emit('offer', {
+                    offer: offer,
+                    room: currentRoom,
+                    target: userId
+                });
+                
+            } catch (error) {
+                console.error('Error creating/sending offer:', error);
+                makingOffer = false;
+            }
+        }
     </script>
 </body>
 </html>
