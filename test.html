@@ -243,15 +243,14 @@
     </div>
 
     <script>
-        const SOCKET_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-            ? 'http://localhost:5000' 
-            : 'https://video-call-app-8ooi.onrender.com';
+        const SOCKET_URL = 'https://video-call-app-8ooi.onrender.com';
         
         const socket = io(SOCKET_URL);
         let localStream = null;
         let currentRoom = null;
         const peers = new Map(); // Store all peer connections
         let isInitiator = false;
+        let isPolite = false; // Track if we're the polite peer
         
         // UI Elements
         const localVideo = document.getElementById('localVideo');
@@ -385,6 +384,13 @@
             peerConnection.onnegotiationneeded = async () => {
                 console.log(`Negotiation needed for ${userId}`);
                 try {
+                    const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
+                    
+                    if (offerCollision) {
+                        console.log('Offer collision detected during negotiation, not creating offer');
+                        return;
+                    }
+
                     const offer = await peerConnection.createOffer();
                     await peerConnection.setLocalDescription(offer);
                     socket.emit('offer', {
@@ -540,6 +546,10 @@
             console.log('Joined room:', data);
             const { room, users } = data;
             
+            // If we're the first user in the room, we're the polite peer
+            isPolite = users.length === 0;
+            console.log(`We are ${isPolite ? 'polite' : 'impolite'} peer`);
+            
             // Create peer connections for existing users
             users.forEach(userId => {
                 console.log(`Creating peer connection for existing user: ${userId}`);
@@ -582,11 +592,20 @@
                     peers.set(from, peerConnection);
                 }
 
-                // Set remote description first
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
+                
+                if (offerCollision) {
+                    console.log('Offer collision detected, rolling back');
+                    await Promise.all([
+                        peerConnection.setLocalDescription({type: 'rollback'}),
+                        peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
+                    ]);
+                } else {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                }
+                
                 console.log('Set remote description from offer');
                 
-                // Then create and set local description
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
                 
@@ -609,6 +628,13 @@
             try {
                 const peerConnection = peers.get(from);
                 if (peerConnection) {
+                    const answerCollision = peerConnection.signalingState !== 'have-local-offer';
+                    
+                    if (answerCollision) {
+                        console.log('Answer collision detected, ignoring answer');
+                        return;
+                    }
+                    
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                     console.log('Set remote description from answer');
                 }
@@ -640,6 +666,13 @@
         // Create and send offer
         async function createAndSendOffer(userId, peerConnection) {
             try {
+                const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
+                
+                if (offerCollision) {
+                    console.log('Offer collision detected, not creating offer');
+                    return;
+                }
+
                 console.log(`Creating offer for user: ${userId}`);
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
