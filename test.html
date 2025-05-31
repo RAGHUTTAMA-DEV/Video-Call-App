@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Video Call</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📹</text></svg>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        input[type="text"] {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            placeholder-color: rgba(255, 255, 255, 0.7);
+            font-size: 16px;
+            min-width: 200px;
+        }
+        
+        input[type="text"]::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        button {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 25px;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #status {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .connected {
+            background: rgba(76, 175, 80, 0.3);
+            border: 2px solid #4caf50;
+        }
+        
+        .disconnected {
+            background: rgba(244, 67, 54, 0.3);
+            border: 2px solid #f44336;
+        }
+        
+        .connecting {
+            background: rgba(255, 193, 7, 0.3);
+            border: 2px solid #ffc107;
+        }
+        
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 30px;
+        }
+        
+        .video-box {
+            text-align: center;
+        }
+        
+        .video-box h3 {
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        video {
+            width: 100%;
+            max-width: 500px;
+            height: 350px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+        
+        video:hover {
+            transform: scale(1.02);
+            box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+        }
+        
+        .media-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .media-btn {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 50px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .media-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .media-btn.active {
+            background: #4caf50;
+        }
+        
+        @media (max-width: 768px) {
+            .video-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls {
+                flex-direction: column;
+            }
+            
+            input[type="text"] {
+                min-width: 250px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 WebRTC Video Call</h1>
+        
+        <div class="controls">
+            <input type="text" id="roomId" placeholder="Enter Room ID (e.g., room123)">
+            <button id="joinBtn" onclick="joinRoom()">Join Room</button>
+            <button id="leaveBtn" onclick="leaveRoom()" style="display: none;">Leave Room</button>
+        </div>
+        
+        <div id="status" class="disconnected">Enter a room ID to start</div>
+        
+        <div class="media-controls">
+            <button class="media-btn active" id="videoBtn" onclick="toggleVideo()">📹 Video On</button>
+            <button class="media-btn active" id="audioBtn" onclick="toggleAudio()">🎤 Audio On</button>
+        </div>
+        
+        <div class="video-container">
+            <div class="video-box">
+                <h3>Your Video</h3>
+                <video id="localVideo" autoplay playsinline muted></video>
+            </div>
+            <div class="video-box">
+                <h3>Remote Video</h3>
+                <video id="remoteVideo" autoplay playsinline></video>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const SOCKET_URL = 'http://localhost:5000';
+        const ICE_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' }
+        ];
+
+        // DOM elements
+        const socket = io(SOCKET_URL);
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const roomIdInput = document.getElementById('roomId');
+        const statusDiv = document.getElementById('status');
+        const joinBtn = document.getElementById('joinBtn');
+        const leaveBtn = document.getElementById('leaveBtn');
+        const videoBtn = document.getElementById('videoBtn');
+        const audioBtn = document.getElementById('audioBtn');
+        
+        // State variables
+        let localStream = null;
+        let peerConnection = null;
+        let currentRoom = null;
+        let isVideoEnabled = true;
+        let isAudioEnabled = true;
+
+        // Initialize media devices
+        async function initializeMedia() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 }, 
+                    audio: true 
+                });
+                localVideo.srcObject = localStream;
+                updateStatus('Media devices ready', 'connecting');
+                return true;
+            } catch (err) {
+                console.error('Error accessing media devices:', err);
+                updateStatus('Error: Cannot access camera/microphone', 'disconnected');
+                return false;
+            }
+        }
+
+        // Update status display
+        function updateStatus(message, type = 'disconnected') {
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+        }
+
+        // Create peer connection
+        function createPeerConnection() {
+            try {
+                peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+                
+                // Add local stream tracks
+                if (localStream) {
+                    localStream.getTracks().forEach(track => {
+                        peerConnection.addTrack(track, localStream);
+                    });
+                }
+
+                // Handle remote stream
+                peerConnection.ontrack = (event) => {
+                    console.log('Received remote track');
+                    if (event.streams && event.streams[0]) {
+                        remoteVideo.srcObject = event.streams[0];
+                        updateStatus('Connected to peer', 'connected');
+                    }
+                };
+
+                // Handle ICE candidates
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        socket.emit('ice-candidate', {
+                            candidate: event.candidate,
+                            room: currentRoom
+                        });
+                    }
+                };
+
+                // Handle connection state changes
+                peerConnection.onconnectionstatechange = () => {
+                    console.log('Connection state:', peerConnection.connectionState);
+                    switch (peerConnection.connectionState) {
+                        case 'connected':
+                            updateStatus('Connected to peer', 'connected');
+                            break;
+                        case 'disconnected':
+                        case 'failed':
+                            updateStatus('Connection lost', 'disconnected');
+                            break;
+                        case 'connecting':
+                            updateStatus('Connecting to peer...', 'connecting');
+                            break;
+                    }
+                };
+
+                return true;
+            } catch (err) {
+                console.error('Error creating peer connection:', err);
+                return false;
+            }
+        }
+
+        // Join room
+        async function joinRoom() {
+            const roomId = roomIdInput.value.trim();
+            if (!roomId) {
+                alert('Please enter a room ID');
+                return;
+            }
+
+            if (!localStream) {
+                const mediaReady = await initializeMedia();
+                if (!mediaReady) return;
+            }
+
+            currentRoom = roomId;
+            joinBtn.disabled = true;
+            updateStatus(`Joining room: ${roomId}...`, 'connecting');
+            
+            socket.emit('join-room', roomId);
+            
+            joinBtn.style.display = 'none';
+            leaveBtn.style.display = 'inline-block';
+            roomIdInput.disabled = true;
+        }
+
+        // Leave room
+        function leaveRoom() {
+            if (currentRoom) {
+                socket.emit('leave-room', currentRoom);
+            }
+            
+            // Cleanup
+            if (peerConnection) {
+                peerConnection.close();
+                peerConnection = null;
+            }
+            
+            if (remoteVideo.srcObject) {
+                remoteVideo.srcObject = null;
+            }
+            
+            currentRoom = null;
+            joinBtn.disabled = false;
+            joinBtn.style.display = 'inline-block';
+            leaveBtn.style.display = 'none';
+            roomIdInput.disabled = false;
+            
+            updateStatus('Left room', 'disconnected');
+        }
+
+        // Toggle video
+        function toggleVideo() {
+            if (localStream) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                if (videoTrack) {
+                    videoTrack.enabled = !videoTrack.enabled;
+                    isVideoEnabled = videoTrack.enabled;
+                    videoBtn.textContent = isVideoEnabled ? '📹 Video On' : '📹 Video Off';
+                    videoBtn.classList.toggle('active', isVideoEnabled);
+                }
+            }
+        }
+
+        // Toggle audio
+        function toggleAudio() {
+            if (localStream) {
+                const audioTrack = localStream.getAudioTracks()[0];
+                if (audioTrack) {
+                    audioTrack.enabled = !audioTrack.enabled;
+                    isAudioEnabled = audioTrack.enabled;
+                    audioBtn.textContent = isAudioEnabled ? '🎤 Audio On' : '🎤 Audio Off';
+                    audioBtn.classList.toggle('active', isAudioEnabled);
+                }
+            }
+        }
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            updateStatus('Connected to server - Enter room ID', 'connecting');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateStatus('Disconnected from server', 'disconnected');
+            leaveRoom();
+        });
+
+        socket.on('room-joined', (data) => {
+            console.log('Joined room:', data.room);
+            updateStatus(`In room: ${data.room} - Waiting for peer...`, 'connecting');
+        });
+
+        socket.on('user-joined', async (data) => {
+            console.log('User joined:', data.userId);
+            
+            if (!createPeerConnection()) return;
+            
+            try {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                
+                socket.emit('offer', {
+                    offer: offer,
+                    room: currentRoom,
+                    target: data.userId
+                });
+            } catch (err) {
+                console.error('Error creating offer:', err);
+            }
+        });
+
+        socket.on('offer', async (data) => {
+            console.log('Received offer');
+            
+            if (!createPeerConnection()) return;
+            
+            try {
+                await peerConnection.setRemoteDescription(data.offer);
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                
+                socket.emit('answer', {
+                    answer: answer,
+                    room: currentRoom,
+                    target: data.from
+                });
+            } catch (err) {
+                console.error('Error handling offer:', err);
+            }
+        });
+
+        socket.on('answer', async (data) => {
+            console.log('Received answer');
+            
+            if (peerConnection) {
+                try {
+                    await peerConnection.setRemoteDescription(data.answer);
+                } catch (err) {
+                    console.error('Error handling answer:', err);
+                }
+            }
+        });
+
+        socket.on('ice-candidate', async (data) => {
+            if (peerConnection) {
+                try {
+                    await peerConnection.addIceCandidate(data.candidate);
+                } catch (err) {
+                    console.error('Error adding ICE candidate:', err);
+                }
+            }
+        });
+
+        socket.on('user-left', () => {
+            console.log('User left');
+            if (remoteVideo.srcObject) {
+                remoteVideo.srcObject = null;
+            }
+            updateStatus(`In room: ${currentRoom} - Waiting for peer...`, 'connecting');
+        });
+
+        socket.on('error', (error) => {
+            console.error('Socket error:', error);
+            updateStatus(`Error: ${error.message}`, 'disconnected');
+        });
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (currentRoom) {
+                socket.emit('leave-room', currentRoom);
+            }
+        });
+
+        // Allow Enter key to join room
+        roomIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                joinRoom();
+            }
+        });
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            console.log('Page loaded, ready to start');
+        });
+    </script>
+</body>
+</html>
