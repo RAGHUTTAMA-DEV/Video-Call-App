@@ -426,14 +426,16 @@
             video.autoplay = true;
             video.playsInline = true;
             video.muted = false; // Ensure audio is not muted
-            video.srcObject = stream;
             
-            // Wait for video to be ready
+            // Wait for video to be ready before setting srcObject
             video.onloadedmetadata = () => {
                 console.log(`Video metadata loaded for user ${userId}`);
                 video.play().catch(e => console.error('Error playing video:', e));
             };
 
+            // Set srcObject after creating the video element
+            video.srcObject = stream;
+            
             // Handle video errors
             video.onerror = (error) => {
                 console.error(`Video error for user ${userId}:`, error);
