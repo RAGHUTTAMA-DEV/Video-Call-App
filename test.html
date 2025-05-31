@@ -312,6 +312,11 @@
                 console.log(`ICE connection state with ${userId}: ${peerConnection.iceConnectionState}`);
             };
             
+            // Handle signaling state changes
+            peerConnection.onsignalingstatechange = () => {
+                console.log(`Signaling state with ${userId}: ${peerConnection.signalingState}`);
+            };
+            
             // Handle incoming tracks
             peerConnection.ontrack = (event) => {
                 console.log(`Received remote track from ${userId}:`, event.track.kind);
@@ -485,6 +490,12 @@
                     peerConnection = createPeerConnection(from);
                     peers.set(from, peerConnection);
                 }
+
+                // Check if we're in a state where we can set the remote description
+                if (peerConnection.signalingState !== 'stable') {
+                    console.log('Connection not stable, ignoring offer');
+                    return;
+                }
                 
                 await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                 console.log('Set remote description from offer');
@@ -511,6 +522,12 @@
             try {
                 const peerConnection = peers.get(from);
                 if (peerConnection) {
+                    // Check if we're in a state where we can set the remote description
+                    if (peerConnection.signalingState !== 'have-local-offer') {
+                        console.log('Connection not in have-local-offer state, ignoring answer');
+                        return;
+                    }
+                    
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                     console.log('Set remote description from answer');
                 }
@@ -542,6 +559,12 @@
         // Create and send offer
         async function createAndSendOffer(userId, peerConnection) {
             try {
+                // Check if we're in a state where we can create an offer
+                if (peerConnection.signalingState !== 'stable') {
+                    console.log('Connection not stable, cannot create offer');
+                    return;
+                }
+
                 console.log(`Creating offer for user: ${userId}`);
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
