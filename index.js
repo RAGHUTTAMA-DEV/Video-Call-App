@@ -17,14 +17,11 @@ const io = new Server(server, {
     }
 });
 
-// Store rooms and their users
 const rooms = new Map();
 
-// Middleware
 app.use(cors());
-app.use(express.static('public')); // Serve static files from public directory
+app.use(express.static('public')); 
 
-// Routes
 app.get("/", (req, res) => {
     res.send(`
         <h1>WebRTC Video Call Server</h1>
@@ -34,7 +31,6 @@ app.get("/", (req, res) => {
     `);
 });
 
-// Utility functions
 function addUserToRoom(roomId, userId) {
     if (!rooms.has(roomId)) {
         rooms.set(roomId, new Set());
@@ -71,14 +67,11 @@ function removeUserFromAllRooms(userId) {
     return null;
 }
 
-// Socket.IO connection handling
 io.on("connection", (socket) => {
     console.log(`User connected: ${socket.id}`);
     
-    // Handle joining a room
     socket.on("join-room", (roomId) => {
         try {
-            // Leave previous room if any
             const previousRoom = removeUserFromAllRooms(socket.id);
             if (previousRoom) {
                 socket.leave(previousRoom);
@@ -86,18 +79,13 @@ io.on("connection", (socket) => {
                 console.log(`User ${socket.id} left previous room: ${previousRoom}`);
             }
             
-            // Join new room
             socket.join(roomId);
             addUserToRoom(roomId, socket.id);
             socket.currentRoom = roomId;
-            
-            // Notify the user they've joined
             socket.emit('room-joined', { room: roomId });
             
-            // Get other users in the room
             const otherUsers = getUsersInRoom(roomId).filter(id => id !== socket.id);
             
-            // Notify existing users about the new user
             if (otherUsers.length > 0) {
                 socket.to(roomId).emit('user-joined', { userId: socket.id });
                 console.log(`Notified ${otherUsers.length} users about new user ${socket.id}`);
@@ -111,7 +99,6 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Handle leaving a room
     socket.on("leave-room", (roomId) => {
         try {
             socket.leave(roomId);
@@ -124,7 +111,6 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Handle WebRTC offer
     socket.on("offer", (data) => {
         try {
             const { offer, room, target } = data;
@@ -140,8 +126,6 @@ io.on("connection", (socket) => {
             socket.emit('error', { message: 'Failed to send offer' });
         }
     });
-    
-    // Handle WebRTC answer
     socket.on("answer", (data) => {
         try {
             const { answer, room, target } = data;
@@ -158,7 +142,6 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Handle ICE candidates
     socket.on("ice-candidate", (data) => {
         try {
             const { candidate, room } = data;
@@ -174,11 +157,9 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Handle disconnection
     socket.on("disconnect", (reason) => {
         console.log(`User disconnected: ${socket.id}, reason: ${reason}`);
         
-        // Remove user from their room
         const roomId = removeUserFromAllRooms(socket.id);
         if (roomId) {
             socket.to(roomId).emit('user-left', { userId: socket.id });
@@ -186,13 +167,11 @@ io.on("connection", (socket) => {
         }
     });
     
-    // Handle errors
     socket.on("error", (error) => {
         console.error(`Socket error from ${socket.id}:`, error);
     });
 });
 
-// Error handling
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);
 });
@@ -201,14 +180,12 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// Start server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`🚀 WebRTC server running on port ${PORT}`);
     console.log(`📱 Access the app at: http://localhost:${PORT}`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
     console.log('SIGTERM received, shutting down gracefully');
     server.close(() => {

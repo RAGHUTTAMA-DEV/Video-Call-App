@@ -208,7 +208,6 @@
     </div>
 
     <script>
-        // Configuration
         const SOCKET_URL = 'http://localhost:5000';
         const ICE_SERVERS = [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -216,7 +215,6 @@
             { urls: 'stun:stun2.l.google.com:19302' }
         ];
 
-        // DOM elements
         const socket = io(SOCKET_URL);
         const localVideo = document.getElementById('localVideo');
         const remoteVideo = document.getElementById('remoteVideo');
@@ -227,14 +225,12 @@
         const videoBtn = document.getElementById('videoBtn');
         const audioBtn = document.getElementById('audioBtn');
         
-        // State variables
         let localStream = null;
         let peerConnection = null;
         let currentRoom = null;
         let isVideoEnabled = true;
         let isAudioEnabled = true;
 
-        // Initialize media devices
         async function initializeMedia() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
@@ -250,26 +246,21 @@
                 return false;
             }
         }
-
-        // Update status display
         function updateStatus(message, type = 'disconnected') {
             statusDiv.textContent = message;
             statusDiv.className = type;
         }
 
-        // Create peer connection
         function createPeerConnection() {
             try {
                 peerConnection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
                 
-                // Add local stream tracks
                 if (localStream) {
                     localStream.getTracks().forEach(track => {
                         peerConnection.addTrack(track, localStream);
                     });
                 }
 
-                // Handle remote stream
                 peerConnection.ontrack = (event) => {
                     console.log('Received remote track');
                     if (event.streams && event.streams[0]) {
@@ -278,7 +269,6 @@
                     }
                 };
 
-                // Handle ICE candidates
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
                         socket.emit('ice-candidate', {
@@ -288,7 +278,6 @@
                     }
                 };
 
-                // Handle connection state changes
                 peerConnection.onconnectionstatechange = () => {
                     console.log('Connection state:', peerConnection.connectionState);
                     switch (peerConnection.connectionState) {
@@ -312,7 +301,6 @@
             }
         }
 
-        // Join room
         async function joinRoom() {
             const roomId = roomIdInput.value.trim();
             if (!roomId) {
@@ -336,13 +324,11 @@
             roomIdInput.disabled = true;
         }
 
-        // Leave room
         function leaveRoom() {
             if (currentRoom) {
                 socket.emit('leave-room', currentRoom);
             }
             
-            // Cleanup
             if (peerConnection) {
                 peerConnection.close();
                 peerConnection = null;
@@ -361,7 +347,6 @@
             updateStatus('Left room', 'disconnected');
         }
 
-        // Toggle video
         function toggleVideo() {
             if (localStream) {
                 const videoTrack = localStream.getVideoTracks()[0];
@@ -374,7 +359,6 @@
             }
         }
 
-        // Toggle audio
         function toggleAudio() {
             if (localStream) {
                 const audioTrack = localStream.getAudioTracks()[0];
@@ -387,7 +371,6 @@
             }
         }
 
-        // Socket event handlers
         socket.on('connect', () => {
             console.log('Connected to server');
             updateStatus('Connected to server - Enter room ID', 'connecting');
@@ -477,22 +460,18 @@
             console.error('Socket error:', error);
             updateStatus(`Error: ${error.message}`, 'disconnected');
         });
-
-        // Handle page unload
         window.addEventListener('beforeunload', () => {
             if (currentRoom) {
                 socket.emit('leave-room', currentRoom);
             }
         });
 
-        // Allow Enter key to join room
         roomIdInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 joinRoom();
             }
         });
 
-        // Initialize on page load
         window.addEventListener('load', () => {
             console.log('Page loaded, ready to start');
         });
