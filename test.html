@@ -251,6 +251,8 @@
         const peers = new Map(); // Store all peer connections
         let isInitiator = false;
         let isPolite = false; // Track if we're the polite peer
+        let makingOffer = false; // Track if we're in the process of making an offer
+        let ignoreOffer = false; // Track if we should ignore incoming offers
         
         // UI Elements
         const localVideo = document.getElementById('localVideo');
@@ -384,22 +386,18 @@
             peerConnection.onnegotiationneeded = async () => {
                 console.log(`Negotiation needed for ${userId}`);
                 try {
-                    const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
+                    makingOffer = true;
+                    await peerConnection.setLocalDescription();
+                    makingOffer = false;
                     
-                    if (offerCollision) {
-                        console.log('Offer collision detected during negotiation, not creating offer');
-                        return;
-                    }
-
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
                     socket.emit('offer', {
-                        offer: offer,
+                        offer: peerConnection.localDescription,
                         room: currentRoom,
                         target: userId
                     });
                 } catch (error) {
                     console.error('Error during negotiation:', error);
+                    makingOffer = false;
                 }
             };
             
@@ -594,18 +592,15 @@
                     peers.set(from, peerConnection);
                 }
 
-                const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
+                const offerCollision = makingOffer || peerConnection.signalingState !== 'stable';
+                ignoreOffer = !isPolite && offerCollision;
                 
-                if (offerCollision) {
-                    console.log('Offer collision detected, rolling back');
-                    await Promise.all([
-                        peerConnection.setLocalDescription({type: 'rollback'}),
-                        peerConnection.setRemoteDescription(new RTCSessionDescription(offer))
-                    ]);
-                } else {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                if (ignoreOffer) {
+                    console.log('Ignoring offer due to collision');
+                    return;
                 }
-                
+
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                 console.log('Set remote description from offer');
                 
                 const answer = await peerConnection.createAnswer();
@@ -652,8 +647,17 @@
             try {
                 const peerConnection = peers.get(from);
                 if (peerConnection) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                    console.log('Added ICE candidate');
+                    if (peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                        console.log('Added ICE candidate');
+                    } else {
+                        console.log('Queueing ICE candidate for later');
+                        // Store the candidate to be added when remote description is set
+                        if (!peerConnection.queuedCandidates) {
+                            peerConnection.queuedCandidates = [];
+                        }
+                        peerConnection.queuedCandidates.push(candidate);
+                    }
                 }
             } catch (error) {
                 console.error('Error adding ICE candidate:', error);
@@ -668,16 +672,10 @@
         // Create and send offer
         async function createAndSendOffer(userId, peerConnection) {
             try {
-                const offerCollision = peerConnection.signalingState !== 'stable' && !isPolite;
-                
-                if (offerCollision) {
-                    console.log('Offer collision detected, not creating offer');
-                    return;
-                }
-
-                console.log(`Creating offer for user: ${userId}`);
+                makingOffer = true;
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
+                makingOffer = false;
                 
                 console.log('Sending offer to:', userId);
                 socket.emit('offer', {
@@ -688,6 +686,7 @@
                 
             } catch (error) {
                 console.error('Error creating/sending offer:', error);
+                makingOffer = false;
             }
         }
         
